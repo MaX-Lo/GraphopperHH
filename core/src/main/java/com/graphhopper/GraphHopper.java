@@ -569,6 +569,8 @@ public class GraphHopper implements GraphHopperAPI {
             elevationProvider = new MultiSourceElevationProvider(cacheDirStr);
         } else if (eleProviderStr.equalsIgnoreCase("skadi")) {
             elevationProvider = new SkadiProvider(cacheDirStr);
+        } else if (eleProviderStr.equalsIgnoreCase("dgm")) {
+            elevationProvider = new DGMProvider(cacheDirStr);
         }
 
         elevationProvider.setAutoRemoveTemporaryFiles(removeTempElevationFiles);
