@@ -22,15 +22,30 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+
+/**
+ * A new elevation provider for the area of Hamburg Germany.
+ *
+ * Offers precise elevation data +-7cm accuracy on street level with available resolutions of: 1m/10m/25m
+ * (keep in mind 1m resolution requires a lot of resources, >32gb RAM)
+ */
 public class DGMProvider extends AbstractElevationProvider {
+
+    enum INTERPOLATION {
+        SNAPPED,
+        BILINEAR
+    }
+
+    // CONFIGURATION OPTIONS
+    private final INTERPOLATION interpolation = INTERPOLATION.BILINEAR;
+    private static final String RESOLUTION = "25"; // Resolution in Meter available Options are 1 | 10 | 25
 
     private final double MIN_LAT;
     private final double MIN_LON;
     private final double MAX_LAT;
     private final double MAX_LON;
 
-    private static final String RESOLUTION = "25"; // Resolution in Meter available Options are 1 | 10 | 25
-    
+
     private final CoordinateTransformation transformation;
     
     private final HashMap<String, Map<String, Double>> loadedEleData;
@@ -47,24 +62,13 @@ public class DGMProvider extends AbstractElevationProvider {
         this.MAX_LAT = 53.759930;
         this.MAX_LON = 10.345204;
 
-        this.downloader = new Downloader("Graphopper DGMReader").setTimeout(10000);
+        this.downloader = new Downloader("Graphhopper DGMReader").setTimeout(10000);
         this.transformation = new CoordinateTransformation("EPSG:4326", "EPSG:25832");
         this.loadedEleData = new HashMap<>();
 
         prepareElevationData();
     }
 
-    public static void main(String[] args) {
-        DGMProvider provider = new DGMProvider();
-        double ele = provider.getEle(53.57426342628851,9.946746826171877);
-        System.out.println("Elevation for 53.55 / 9.99 is " + ele);
-    }
-
-    /**
-     * 1) Download Data
-     * 2) Convert Into GPS Coordinate System
-     * 3) Store in /tmp/dgm in 1kmx1km sized files
-     */
     public void prepareElevationData() {
         String zipFilePath = cacheDir + "/HH_Elevation.zip";
         String unzippedDirPath = cacheDir.getAbsolutePath();
@@ -74,15 +78,14 @@ public class DGMProvider extends AbstractElevationProvider {
 
         new File(unzippedDirPath).mkdirs();
         unzipFile(zipFilePath, unzippedDirPath);
-
     }
 
     private void downloadElevationData(String destFilePath) {
         File file = new File(destFilePath);
         try {
-            System.out.println("Dowloading elevation data");
+            logger.info("Dowloading elevation data");
             downloadFile(file, getDownloadURL(0, 0));
-            System.out.println("Finished downloading elevation data");
+            logger.info("Finished downloading elevation data");
         } catch (IOException e) {
             logger.warn("cannot load file from " + getDownloadURL(0, 0) + ", error: " + e.getMessage());
             e.printStackTrace();
@@ -91,10 +94,10 @@ public class DGMProvider extends AbstractElevationProvider {
 
     public void unzipFile(String zipFilePath, String destFilePath) {
         try {
-            System.out.println("Unzipping elevation data");
+            logger.info("Unzipping elevation data");
             ZipFile zipFile = new ZipFile(zipFilePath);
             zipFile.extractAll(destFilePath);
-            System.out.println("Finished unzipping elevation data");
+            logger.info("Finished unzipping elevation data");
         } catch (ZipException e) {
             e.printStackTrace();
         }
@@ -173,10 +176,6 @@ public class DGMProvider extends AbstractElevationProvider {
 
     @Override
     public double getEle(double latEPSG4326, double lonEPSG4326) {
-        if (latEPSG4326 == 53.57426342628851 && lonEPSG4326 == 9.946746826171877) {
-            int tz = 0;
-        }
-
         // return directly if we know that the given coordinate is not included
         if (latEPSG4326 < this.MIN_LAT || latEPSG4326 > this.MAX_LAT
                 || lonEPSG4326 < this.MIN_LON || lonEPSG4326 > this.MAX_LON) {
@@ -194,17 +193,25 @@ public class DGMProvider extends AbstractElevationProvider {
 
         int latEPSG25832 = Math.toIntExact(Math.round(coordEPSG25832[0]));
         int lonEPSG25832 = Math.toIntExact(Math.round(coordEPSG25832[1]));
-        int[] coord = {latEPSG25832, lonEPSG25832};
 
-        return bilinearInterpolatedElevation(latEPSG25832, lonEPSG25832);
+        switch (interpolation) {
+            case BILINEAR:
+                return bilinearInterpolatedElevation(latEPSG25832, lonEPSG25832);
+            case SNAPPED:
+                return snappedElevation(latEPSG4326, lonEPSG4326);
+            default:
+                logger.warn("Uknown Interpolation method: " + interpolation + ", defaulting to BILINEAR");
+                return bilinearInterpolatedElevation(latEPSG25832, lonEPSG25832);
+        }
     }
 
     /**
-     * bilinear interpolation seems to be a good approach https://www.omnicalculator.com/math/bilinear-interpolation
+     * return the elevation while using bilinear interpolation
+     * https://www.omnicalculator.com/math/bilinear-interpolation
      *
-     * @param lat
-     * @param lon
-     * @return
+     * @param lat - latitude as EPSG25832
+     * @param lon - longitude as EPSG25832
+     * @return elevation in meter
      */
     private double bilinearInterpolatedElevation(double lat, double lon) {
         int resolution = Integer.parseInt(RESOLUTION);
@@ -222,9 +229,8 @@ public class DGMProvider extends AbstractElevationProvider {
         double q12 = elevation((int) x1, (int) y2);
         double q22 = elevation((int) x2, (int) y2);
 
-        // if the given coordinate matches exactly on a coordinate with known elevation return it directly,
-        // also since the bilinear interpolation wouldn't work in such a case
-        double elevation = -2;
+        double elevation;
+        // direct match, no interpolation required
         if (x == x1 && y == y1) {
             elevation = q11;
         } else if (x == x1 && y == y2) {
@@ -233,17 +239,17 @@ public class DGMProvider extends AbstractElevationProvider {
                 elevation = q21;
         } else if (x == x2 && y == y2) {
             elevation = q22;
+        // linear interpolation
         } else if (x1 == x2) {
             elevation = q11 + (y - y1) * ((q12 - q11) / (y2 - y1));
         } else if (y1 == y2) {
             elevation = q11 + (x - x1) * ((q12 - q11) / (x2 - x1));
+        // bilinear interpolation
         } else {
             double r1 = (x2 - x) / (x2 - x1) * q11 + (x - x1) / (x2 - x1) * q21;
             double r2 = (x2 - x) / (x2 - x1) * q12 + (x - x1) / (x2 - x1) * q22;
-            double p = (y2 - y) / (y2 - y1) * r1 + (y - y1) / (y2 - y1) * r2;
-            elevation = p;
+            elevation = (y2 - y) / (y2 - y1) * r1 + (y - y1) / (y2 - y1) * r2;
         }
-
         return elevation;
     }
 
@@ -258,18 +264,15 @@ public class DGMProvider extends AbstractElevationProvider {
         int resolution = Integer.parseInt(RESOLUTION);
         int latRounded = resolution * (Math.round((float) lat / resolution));
         int lonRounded = resolution * (Math.round((float) lon / resolution));
-
         return elevation(latRounded, lonRounded);
     }
 
     private double elevation(int lat, int lon) {
         String key = String.valueOf(lat).substring(0, 3) + "_" + String.valueOf(lon).substring(0, 4);
-
         Map<String, Double> bucket = getBucket(key, lat, lon);
         if (bucket == null) {
             return 0;
         }
-
         String coordStr = lat + ".00_" + lon + ".00";
         Double elevation = bucket.get(coordStr);
         if (elevation == null) {
@@ -296,17 +299,17 @@ public class DGMProvider extends AbstractElevationProvider {
         return loadedEleData.get(key);
     }
 
+    /**
+     * read the elevation data file from filePath
+     * @param filePath - absolute file path
+     * @return map of coordinate stored as string key (lat/long seperated by "_") and elevation as double value in m
+     */
     private Map<String, Double> readXYZFile(String filePath) {
         HashMap<String, Double> data = new HashMap<>();
         try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
             for (String line; (line = br.readLine()) != null; ) {
                 String[] splitted_line = line.split(" ");
-                // increment by one equals 1m which also is the highest available resolution
-                int lat_EPSG_25832 = (int) Double.parseDouble(splitted_line[0]);
-                int lon_EPSG_25832 = (int) Double.parseDouble(splitted_line[1]);
                 double elevation = Double.parseDouble(splitted_line[2]);
-
-                int[] coordinate = {lat_EPSG_25832, lon_EPSG_25832};
                 String coordStr = splitted_line[0] + "_" + splitted_line[1];
                 data.put(coordStr, elevation);
             }
@@ -326,7 +329,7 @@ public class DGMProvider extends AbstractElevationProvider {
  * Helper class to project coordinates between different coordinate systems
  *
  * to add new projections the setUsedCoordOperation() method needs to be extended since there is no uniform way
- * to find the correct projection method for all possible projections
+ * to find the correct projection method for all possible projections.
  */
 class CoordinateTransformation {
 
@@ -336,10 +339,6 @@ class CoordinateTransformation {
     private Set<CoordinateOperation> coordOps;
     private CoordinateOperation coordOp;
 
-    public CoordinateTransformation() {
-        this("EPSG:25832", "EPSG:4326");
-    }
-
     public CoordinateTransformation(String srcCoordSystem, String trgtCoordSystem) {
         this.srcCoordSystem = srcCoordSystem;
         this.trgtCoordSystem = trgtCoordSystem;
@@ -347,7 +346,7 @@ class CoordinateTransformation {
         CRSFactory cRSFactory = new CRSFactory();
         RegistryManager registryManager = cRSFactory.getRegistryManager();
         registryManager.addRegistry(new EPSGRegistry());
-        CoordinateReferenceSystem crsSrc = null;
+        CoordinateReferenceSystem crsSrc;
         try {
             crsSrc = cRSFactory.getCRS(srcCoordSystem);
             CoordinateReferenceSystem crsTrgt = cRSFactory.getCRS(trgtCoordSystem);
@@ -384,7 +383,7 @@ class CoordinateTransformation {
             for (CoordinateOperation op : coordOps) {
                 try {
                     double[] dd = op.transform(coord);
-                    if (dd[0] > 551100 && dd[0] < 551200) { // {551120.00, 5930000.00}
+                    if (dd[0] > 551100 && dd[0] < 551200) {
                         coordOp = op;
                         return;
                     }
@@ -394,7 +393,7 @@ class CoordinateTransformation {
             }
         } else {
             throw new Exception("Transformation could not be selected! Please check which projection " +
-                    "should be applied for the used coordinate systems");
+                    "should be applied for the used coordinate systems.");
         }
     }
 
