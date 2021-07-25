@@ -37,8 +37,8 @@ public class DGMProvider extends AbstractElevationProvider {
     }
 
     // CONFIGURATION OPTIONS
-    private final INTERPOLATION interpolation = INTERPOLATION.BILINEAR;
-    private static final String RESOLUTION = "25"; // Resolution in Meter available Options are 1 | 10 | 25
+    private INTERPOLATION interpolation;
+    private static final String RESOLUTION = "10"; // Resolution in Meter available Options are 1 | 10 | 25
 
     private final double MIN_LAT;
     private final double MIN_LON;
@@ -176,6 +176,8 @@ public class DGMProvider extends AbstractElevationProvider {
 
     @Override
     public double getEle(double latEPSG4326, double lonEPSG4326) {
+        this.interpolation = interpolate ? INTERPOLATION.BILINEAR : INTERPOLATION.SNAPPED;
+
         // return directly if we know that the given coordinate is not included
         if (latEPSG4326 < this.MIN_LAT || latEPSG4326 > this.MAX_LAT
                 || lonEPSG4326 < this.MIN_LON || lonEPSG4326 > this.MAX_LON) {
@@ -198,7 +200,7 @@ public class DGMProvider extends AbstractElevationProvider {
             case BILINEAR:
                 return bilinearInterpolatedElevation(latEPSG25832, lonEPSG25832);
             case SNAPPED:
-                return snappedElevation(latEPSG4326, lonEPSG4326);
+                return snappedElevation(latEPSG25832, lonEPSG25832);
             default:
                 logger.warn("Uknown Interpolation method: " + interpolation + ", defaulting to BILINEAR");
                 return bilinearInterpolatedElevation(latEPSG25832, lonEPSG25832);
