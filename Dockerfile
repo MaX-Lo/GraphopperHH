@@ -21,11 +21,7 @@ COPY --from=build /graphhopper/web/target/graphhopper*.jar ./
 
 COPY ./config.yml ./
 
-COPY ./wait.sh ./
-
 RUN wget -t 3 "https://download.geofabrik.de/europe/germany/hamburg-latest.osm.pbf"
-
-#VOLUME ["/graphhopper/default-gh" ]
 
 # preprocessing can only be done in combination with starting graphhopper as well. One solution
 # (if not the best) is to start graphhopper and terminate it after preprocessing is finished.
@@ -40,13 +36,8 @@ RUN timeout 60s java -Xmx6g \
          server \
          config.yml; exit 0
 
-# second approach doing a repeated polling - doesn't work with docker?
-#RUN ./wait.sh
-
 EXPOSE 8989
 
-# dgm-hh preprocessing requires ~5gb of memory - might get obsolete if we can include preprocessing
-# into image generation
 ENTRYPOINT java -Xmx6g \
                 -Xms6g \
                 -Ddw.server.application_connectors[0].bind_host=0.0.0.0 \
