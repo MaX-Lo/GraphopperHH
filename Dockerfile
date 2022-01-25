@@ -1,7 +1,7 @@
 # Dockerfile to create a graphhopper image including the latest OSM Hamburg data as well as elevation data
 # from Hamburg (dgmhh) or from other elevation provider as set in config.yml.
 
-FROM maven:3.6.3-jdk-8 as build
+FROM maven:3.8.4-jdk-8 as build
 
 RUN apt-get install -y wget
 
@@ -9,7 +9,9 @@ WORKDIR /graphhopper
 
 COPY . .
 
-RUN mvn clean install -DskipTests
+# Use -q to avoid maven overflowing log limits
+# Use -e to see stacktraces in case of errors
+RUN mvn clean install -DskipTests -q -e
 
 FROM openjdk:11.0-jre
 
@@ -39,7 +41,6 @@ RUN timeout 60s java -Xmx6g \
 EXPOSE 8989
 
 ENTRYPOINT java -Xmx6g \
-                -Xms6g \
                 -Ddw.server.application_connectors[0].bind_host=0.0.0.0 \
                 -Ddw.server.application_connectors[0].port=8989 \
                 -Ddw.graphhopper.datareader.file=hamburg-latest.osm.pbf \
